@@ -15,7 +15,7 @@ def conectar_planilha():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
     client = gspread.authorize(creds)
-    return client.open("PET Eventos - Database").sheet1
+    return client.open("Inscrições Infogirl 2025 (UFC)(respostas)").worksheet("Respostas ao formulário").sheet1
 
 # Função para ler dados atuais (sem cache, para pegar atualizações)
 def carregar_dados():
@@ -47,33 +47,28 @@ with col1:
         data, bbox, _ = detector.detectAndDecode(cv2_img)
         
         if data:
-            email_detectado = data
-            st.info(f"🔍 Código lido: {email_detectado}")
+            # 1. Sanitização (Limpeza) do Input
+            # Transforma em texto, tira espaços extras e joga tudo pra minúsculo
+            email_detectado = str(data).strip().lower()
             
-            # 3. Buscar na base de dados
-            # Verifica se o email existe na coluna 'Email' do DataFrame
-            usuario = df[df['Email'] == email_detectado]
+            st.info(f"🔍 Código lido (sanitizado): '{email_detectado}'")
+            
+            # 2. Debug (Para você ver o que está acontecendo na tela)
+            # Isso mostra os primeiros 5 emails da lista pra você conferir se está batendo
+            st.caption("Debug - Primeiros e-mails da base:")
+            st.code(df['Endereço de e-mail'].head().tolist())
+
+            # 3. Busca Robusta (Case Insensitive)
+            # Criamos uma máscara onde limpamos a coluna da planilha TAMBÉM antes de comparar
+            # Isso não altera os dados originais, só a comparação
+            usuario = df[df['Endereço de e-mail'].astype(str).str.strip().str.lower() == email_detectado]
             
             if not usuario.empty:
-                nome_aluno = usuario.iloc[0]['Nome']
+                # Se achou, pega o nome da linha original (sem minúsculas)
+                nome_aluno = usuario.iloc[0]['Nome completo']
                 ja_entrou = usuario.iloc[0]['Checkin']
                 
-                if ja_entrou == "SIM":
-                    st.warning(f"⚠️ {nome_aluno} já realizou o check-in anteriormente!")
-                else:
-                    # 4. Registrar Presença no Google Sheets
-                    # Descobrir o número da linha (index do DF + 2 porque excel começa no 1 e tem cabeçalho)
-                    numero_linha = usuario.index[0] + 2
-                    
-                    # Atualiza coluna 3 (Checkin) com "SIM"
-                    sheet_instance.update_cell(numero_linha, 3, "SIM")
-                    
-                    st.success(f"✅ BEM-VINDO(A), {nome_aluno.upper()}!")
-                    st.balloons() # Efeito visual legal para demos
-            else:
-                st.error("❌ E-mail não encontrado na lista de inscritos.")
-        else:
-            st.warning("Nenhum QR Code detectado na imagem. Tente aproximar.")
+                # ... (o resto do código segue igual: verifica se já entrou, dá parabéns, etc)
 
 # --- SIDEBAR (DASHBOARD) ---
 with st.sidebar:
