@@ -87,7 +87,7 @@ def main():
                 
                 # 3. Atualizar Planilha
                 # Atenção: Coluna 4 é onde está o 'QR_Enviado' (A=1, B=2, C=3, D=4)
-                sheet.update_cell(numero_linha_planilha, 4, "SIM")
+                sheet.update_cell(numero_linha_planilha, 9, "SIM")
                 
                 # 4. Limpeza (apagar a imagem do computador para não acumular lixo)
                 os.remove(nome_arquivo_qr)
