@@ -9,84 +9,88 @@ from datetime import datetime
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="PET TI - Check-in", page_icon="✅", layout="wide")
 
-# --- CONEXÃO COM GOOGLE SHEETS (Cacheada para não reconectar toda hora) ---
+# --- CONEXÃO COM GOOGLE SHEETS ---
 @st.cache_resource
 def conectar_planilha():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
     client = gspread.authorize(creds)
-    return client.open("Inscrições Infogirl 2025 (UFC)(respostas)").worksheet("Respostas ao formulário").sheet1
+    
+    # CORREÇÃO 1: Adicionei o "1" no final, pois sua planilha real tem esse nome
+    return client.open("Inscrições Infogirl 2025 (UFC)(respostas)").worksheet("Respostas ao formulário")
 
-# Função para ler dados atuais (sem cache, para pegar atualizações)
+# Função para ler dados
 def carregar_dados():
     sheet = conectar_planilha()
-    # Pega todos os registros e transforma em DataFrame do Pandas (mais fácil de mexer)
     dados = sheet.get_all_records()
     return pd.DataFrame(dados), sheet
 
-# --- INTERFACE PRINCIPAL ---
+# --- INTERFACE ---
 st.title("🤖 Sistema de Check-in - PET TI")
-st.write("Aponte o QR Code para a câmera abaixo.")
-
-# Layout em colunas (Câmera na Esquerda, Status na Direita)
 col1, col2 = st.columns([2, 1])
 
+# Carrega os dados
 df, sheet_instance = carregar_dados()
 
 with col1:
-    # O Widget de Câmera do Streamlit
     img_file_buffer = st.camera_input("Escanear QR Code")
 
     if img_file_buffer is not None:
-        # 1. Converter a imagem para formato que o OpenCV entende
         bytes_data = img_file_buffer.getvalue()
         cv2_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-        
-        # 2. Detectar QR Code
         detector = cv2.QRCodeDetector()
         data, bbox, _ = detector.detectAndDecode(cv2_img)
         
         if data:
-            # 1. Sanitização (Limpeza) do Input
-            # Transforma em texto, tira espaços extras e joga tudo pra minúsculo
+            # Sanitização
             email_detectado = str(data).strip().lower()
+            st.info(f"🔍 Lido: '{email_detectado}'")
             
-            st.info(f"🔍 Código lido (sanitizado): '{email_detectado}'")
-            
-            # 2. Debug (Para você ver o que está acontecendo na tela)
-            # Isso mostra os primeiros 5 emails da lista pra você conferir se está batendo
-            st.caption("Debug - Primeiros e-mails da base:")
-            st.code(df['Endereço de e-mail'].head().tolist())
+            # Debug: Mostra os emails da planilha para você conferir
+            # CORREÇÃO 2: Mudei para 'E-mail' (Coluna B) que é a correta
+            st.caption("Debug - Primeiros da lista:")
+            st.code(df['E-mail'].head(3).tolist())
 
-            # 3. Busca Robusta (Case Insensitive)
-            # Criamos uma máscara onde limpamos a coluna da planilha TAMBÉM antes de comparar
-            # Isso não altera os dados originais, só a comparação
-            usuario = df[df['Endereço de e-mail'].astype(str).str.strip().str.lower() == email_detectado]
+            # CORREÇÃO 3: Busca na coluna certa 'E-mail'
+            usuario = df[df['E-mail'].astype(str).str.strip().str.lower() == email_detectado]
             
             if not usuario.empty:
-                # Se achou, pega o nome da linha original (sem minúsculas)
-                nome_aluno = usuario.iloc[0]['Nome completo']
-                ja_entrou = usuario.iloc[0]['Checkin']
+                # CORREÇÃO 4: Busca na coluna certa 'Nome'
+                nome_aluno = usuario.iloc[0]['Nome']
                 
-                # ... (o resto do código segue igual: verifica se já entrou, dá parabéns, etc)
+                # CORREÇÃO 5: Verifica se a coluna Checkin existe/está preenchida
+                # Se a coluna não existir no DataFrame (ainda vazia), assume que não entrou
+                if 'Checkin' in usuario.columns:
+                    ja_entrou = usuario.iloc[0]['Checkin']
+                else:
+                    ja_entrou = ""
+                
+                if str(ja_entrou).upper() == "SIM":
+                    st.warning(f"⚠️ {nome_aluno} JÁ ENTROU!")
+                else:
+                    numero_linha = usuario.index[0] + 2
+                    # Escreve SIM na Coluna 10 (Coluna J - Checkin)
+                    sheet_instance.update_cell(numero_linha, 10, "SIM")
+                    st.success(f"✅ BEM-VINDO(A), {nome_aluno.upper()}!")
+                    st.balloons()
+                    
+                    # Limpa cache para atualizar o gráfico lateral
+                    st.cache_data.clear()
+            else:
+                st.error("❌ E-mail não encontrado! Verifique a planilha.")
 
-# --- SIDEBAR (DASHBOARD) ---
+# --- DASHBOARD ---
 with st.sidebar:
-    st.header("📊 Métricas do Evento")
-    
-    # Recarrega dados para garantir contagem atualizada
-    df_atual, _ = carregar_dados()
-    
-    total_inscritos = len(df_atual)
-    total_presentes = len(df_atual[df_atual['Checkin'] == "SIM"])
-    percentual = (total_presentes / total_inscritos) * 100 if total_inscritos > 0 else 0
-    
-    st.metric("Total de Inscritos", total_inscritos)
-    st.metric("Presentes Agora", total_presentes, delta=f"{percentual:.1f}% de comparecimento")
-    
-    # Barra de progresso
-    st.progress(total_presentes / total_inscritos if total_inscritos > 0 else 0)
-    
-    st.divider()
-    if st.button("🔄 Atualizar Dados"):
+    st.header("📊 Métricas")
+    if st.button("🔄 Atualizar"):
         st.rerun()
+        
+    total_inscritos = len(df)
+    # Conta quantos "SIM" existem na coluna Checkin (se ela existir)
+    if 'Checkin' in df.columns:
+        total_presentes = len(df[df['Checkin'].astype(str).str.upper() == "SIM"])
+    else:
+        total_presentes = 0
+        
+    st.metric("Total", total_inscritos)
+    st.metric("Presentes", total_presentes)
